@@ -2,11 +2,14 @@
   "name": "vibe-homepage",
   "packageManager": "yarn@4.9.2",
   "dependencies": {
-    "express": "^5.1.0"
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
     "@types/node": "^24.5.2",
+    "@types/ws": "^8",
     "concurrently": "^9.2.1",
     "copy-webpack-plugin": "^13.0.1",
     "nodemon": "^3.1.10",
