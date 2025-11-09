@@ -22,14 +22,14 @@ Render a personal website for James Paterson, a software engineer working at Via
 ### GUIDELINES FOR GENERATING
 DO NOT include any explanations, just provide the raw HTML content. Your content will be inserted into a predefined HTML template.
 You should NOT include the <!DOCTYPE html>, <html>, <head>, or <body> tags, as these are already part of the template.
-You should write your HTML with INLINE STYLES only, then a <script> block for any 
-interactivity or animations. You should avoid using any full page fade in animations or similar.
+You should write your HTML with INLINE STYLES only. You should avoid using any full page fade in animations or similar. You should prefer
+to use CSS transitions rather than JS to provide animations.
 
 If you need to make assumptions about James Paterson, do so freely. Be creative when making the website. Background animations are a plus.
  The HTML should be well-structured and use semantic elements where appropriate. Above all, the page should be sleek and cool.
 `;
 const OPENAPI_ENDPOINT = 'https://api.openai.com/v1/responses';
-const OPENAPI_MODEL = 'gpt-4.1-mini';
+const OPENAPI_MODEL = 'gpt-5-mini';
 
 const DEFAULT_CONTENT = String.raw`
   <div id="content" aria-live="polite"></div>
