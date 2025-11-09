@@ -16,7 +16,20 @@ const rawPort = process.env.PORT ?? '3000';
 const parsedPort = Number.parseInt(rawPort, 10);
 const PORT = Number.isNaN(parsedPort) ? 3000 : parsedPort;
 const TEMPLATE_PATH = path.resolve(__dirname, 'index.html');
-const STREAM_PROMPT = 'render a personal website for James Paterson';
+
+// lang=markdown
+const STREAM_PROMPT = `
+Render a personal website for James Paterson, a software engineer working at Viator/Tripadvisor Experiences.
+
+### GUIDELINES FOR GENERATING
+DO NOT include any explanations, just provide the raw HTML content. Your content will be inserted into a predefined HTML template.
+You should NOT include the <!DOCTYPE html>, <html>, <head>, or <body> tags, as these are already part of the template.
+You should write your HTML with INLINE STYLES only, then a <script> block for any 
+interactivity or animations. You should avoid using any full page fade in animations or similar.
+
+If you need to make assumptions about James Paterson, do so freely. Be creative when making the website. Background animations are a plus.
+ The HTML should be well-structured and use semantic elements where appropriate. Above all, the page should be sleek and cool.
+`;
 const OPENAPI_ENDPOINT = 'https://api.openai.com/v1/responses';
 const OPENAPI_MODEL = 'gpt-4.1-mini';
 
@@ -185,6 +198,8 @@ const streamPersonalWebsite = async ({ signal, onChunk }: StreamOptions): Promis
       const rawEvent = buffer.slice(0, newlineIndex);
       buffer = buffer.slice(newlineIndex + 2);
 
+      console.log('[STREAM] Raw event received:', rawEvent.substring(0, 300));
+
       const payload = rawEvent
         .split('\n')
         .map((line) => line.trim())
@@ -193,8 +208,11 @@ const streamPersonalWebsite = async ({ signal, onChunk }: StreamOptions): Promis
         .join('\n');
 
       if (!payload) {
+        console.log('[STREAM] Empty payload, skipping');
         continue;
       }
+      
+      console.log('[STREAM] Extracted payload:', payload.substring(0, 200));
 
       if (payload === '[DONE]') {
         completed = true;
@@ -203,29 +221,74 @@ const streamPersonalWebsite = async ({ signal, onChunk }: StreamOptions): Promis
 
       try {
         const parsed = JSON.parse(payload) as { type?: string; delta?: unknown; error?: { message?: string } };
+        
+        console.log('[STREAM] Parsed event:', {
+          type: parsed.type,
+          hasDelta: 'delta' in parsed,
+          deltaType: typeof parsed.delta,
+          fullPayload: JSON.stringify(parsed).substring(0, 200),
+        });
 
+        // Handle custom API format: response.output_text.delta
         if (parsed.type === 'response.output_text.delta' && typeof parsed.delta === 'string') {
+          console.log('[STREAM] Processing delta chunk, length:', parsed.delta.length);
           onChunk(parsed.delta);
-        } else if (parsed.type === 'response.error') {
+        } 
+        // Handle standard OpenAI chat completions format
+        else if (parsed.choices && Array.isArray(parsed.choices) && parsed.choices.length > 0) {
+          const choice = parsed.choices[0];
+          if (choice.delta && choice.delta.content && typeof choice.delta.content === 'string') {
+            console.log('[STREAM] Processing OpenAI chat completion chunk, length:', choice.delta.content.length);
+            onChunk(choice.delta.content);
+          }
+        }
+        // Handle direct content field
+        else if (typeof parsed.content === 'string') {
+          console.log('[STREAM] Processing content chunk, length:', parsed.content.length);
+          onChunk(parsed.content);
+        }
+        // Handle text field
+        else if (typeof parsed.text === 'string') {
+          console.log('[STREAM] Processing text chunk, length:', parsed.text.length);
+          onChunk(parsed.text);
+        }
+        else if (parsed.type === 'response.error') {
           const message = parsed.error?.message ?? 'The OpenAPI service returned an unknown error.';
           throw new Error(message);
+        } else {
+          console.log('[STREAM] Unhandled event type:', parsed.type, 'full structure:', Object.keys(parsed));
         }
       } catch (error) {
-        console.error('Failed to parse streaming payload from OpenAPI', error);
-        throw error instanceof Error ? error : new Error('Failed to parse streaming payload from OpenAPI');
+        if (error instanceof SyntaxError) {
+          console.error('[STREAM] Failed to parse JSON payload:', {
+            error: error.message,
+            payload: payload.substring(0, 200),
+          });
+        } else {
+          console.error('[STREAM] Failed to process streaming payload:', error);
+        }
+        // Don't throw on parse errors, just log them
+        if (error instanceof Error && error.message.includes('OpenAPI service returned')) {
+          throw error;
+        }
       }
     }
   };
 
   try {
+    let chunkCount = 0;
     while (!completed) {
       const { value, done } = await reader.read();
 
       if (done) {
+        console.log('[STREAM] Stream reader done, total chunks read:', chunkCount);
         break;
       }
 
-      buffer += decoder.decode(value, { stream: true });
+      chunkCount++;
+      const decoded = decoder.decode(value, { stream: true });
+      console.log('[STREAM] Read chunk #' + chunkCount + ', length:', decoded.length, 'preview:', decoded.substring(0, 100));
+      buffer += decoded;
       processBuffer();
     }
 
