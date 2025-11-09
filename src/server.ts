@@ -32,17 +32,12 @@ const OPENAPI_ENDPOINT = 'https://api.openai.com/v1/responses';
 const OPENAPI_MODEL = 'gpt-4.1-mini';
 
 const DEFAULT_CONTENT = String.raw`
-  <main style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 900px; margin: 3rem auto; padding: 0 1.5rem;">
-    <h1 style="margin-bottom: 0.5rem;">Generating James Paterson's personal website</h1>
-    <p id="status" style="color: #555;">Establishing a live connection&hellip;</p>
-    <div id="content" aria-live="polite"></div>
-  </main>
+  <div id="content" aria-live="polite"></div>
   <script>
     (() => {
-      const status = document.getElementById('status');
       const target = document.getElementById('content');
-      if (!status || !target) {
-        console.error('[CLIENT] ERROR: Could not find status or target elements');
+      if (!target) {
+        console.error('[CLIENT] ERROR: Could not find target element');
         return;
       }
 
@@ -50,6 +45,8 @@ const DEFAULT_CONTENT = String.raw`
       const socketUrl = protocol + '://' + window.location.host + '/stream';
       const socket = new WebSocket(socketUrl);
       let buffer = '';
+      let chunkCount = 0;
+      const PROGRESS_LOG_INTERVAL = 10; // Log progress every 10 chunks
 
       const escapeHtml = (value) => value.replace(/[&<>"']/g, (character) => ({
         '&': '&amp;',
@@ -59,8 +56,11 @@ const DEFAULT_CONTENT = String.raw`
         "'": '&#39;',
       })[character] || character);
 
+      console.log('[CLIENT] Generating James Paterson\'s personal website');
+      console.log('[CLIENT] Establishing a live connection...');
+
       socket.addEventListener('open', () => {
-        status.textContent = 'Building the page&hellip;';
+        console.log('[CLIENT] Building the page...');
       });
 
       socket.addEventListener('message', (event) => {
@@ -70,13 +70,18 @@ const DEFAULT_CONTENT = String.raw`
           if (payload.type === 'chunk' && typeof payload.data === 'string') {
             buffer += payload.data;
             target.innerHTML = buffer;
-            status.textContent = 'Adding sections&hellip;';
+            chunkCount++;
+            
+            // Log progress periodically
+            if (chunkCount % PROGRESS_LOG_INTERVAL === 0) {
+              console.log('[CLIENT] Adding sections... (' + chunkCount + ' chunks received)');
+            }
           } else if (payload.type === 'done') {
-            status.textContent = 'James Paterson\'s personal website is ready.';
+            console.log('[CLIENT] James Paterson\'s personal website is ready.');
             socket.close();
           } else if (payload.type === 'error' && typeof payload.message === 'string') {
             console.error('[CLIENT] Error payload received:', payload.message);
-            status.textContent = 'Unable to build the website.';
+            console.error('[CLIENT] Unable to build the website.');
             const errorMarkup = '<pre style="white-space: pre-wrap; background: #f5f5f5; padding: 1rem; border-radius: 0.5rem;">' + escapeHtml(payload.message) + '</pre>';
             target.innerHTML = errorMarkup;
             socket.close();
@@ -91,13 +96,13 @@ const DEFAULT_CONTENT = String.raw`
 
       socket.addEventListener('close', (event) => {
         if (!buffer) {
-          status.textContent = 'Connection closed before any content was received.';
+          console.warn('[CLIENT] Connection closed before any content was received.');
         }
       });
 
       socket.addEventListener('error', (error) => {
         console.error('[CLIENT] WebSocket error:', error);
-        status.textContent = 'A network error occurred.';
+        console.error('[CLIENT] A network error occurred.');
       });
     })();
   </script>
