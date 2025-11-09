@@ -7,8 +7,6 @@ import { WebSocketServer, WebSocket } from 'ws';
 
 dotenv.config();
 
-console.log('[SERVER] Initializing server...');
-
 const app = express();
 const server = http.createServer(app);
 
@@ -33,14 +31,6 @@ If you need to make assumptions about James Paterson, do so freely. Be creative 
 const OPENAPI_ENDPOINT = 'https://api.openai.com/v1/responses';
 const OPENAPI_MODEL = 'gpt-4.1-mini';
 
-console.log('[SERVER] Configuration:', {
-  PORT,
-  TEMPLATE_PATH,
-  OPENAPI_ENDPOINT,
-  OPENAPI_MODEL,
-  hasApiKey: !!process.env.OPENAPI_API_KEY,
-});
-
 const DEFAULT_CONTENT = String.raw`
   <main style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 900px; margin: 3rem auto; padding: 0 1.5rem;">
     <h1 style="margin-bottom: 0.5rem;">Generating James Paterson's personal website</h1>
@@ -49,21 +39,17 @@ const DEFAULT_CONTENT = String.raw`
   </main>
   <script>
     (() => {
-      console.log('[CLIENT] Initializing WebSocket client...');
       const status = document.getElementById('status');
       const target = document.getElementById('content');
       if (!status || !target) {
         console.error('[CLIENT] ERROR: Could not find status or target elements');
         return;
       }
-      console.log('[CLIENT] Found DOM elements:', { status: !!status, target: !!target });
 
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
       const socketUrl = protocol + '://' + window.location.host + '/stream';
-      console.log('[CLIENT] Connecting to WebSocket:', socketUrl);
       const socket = new WebSocket(socketUrl);
       let buffer = '';
-      let messageCount = 0;
 
       const escapeHtml = (value) => value.replace(/[&<>"']/g, (character) => ({
         '&': '&amp;',
@@ -74,28 +60,18 @@ const DEFAULT_CONTENT = String.raw`
       })[character] || character);
 
       socket.addEventListener('open', () => {
-        console.log('[CLIENT] WebSocket opened');
         status.textContent = 'Building the page&hellip;';
       });
 
       socket.addEventListener('message', (event) => {
-        messageCount++;
-        console.log('[CLIENT] Message #' + messageCount + ' received, length:', event.data.length);
         try {
           const payload = JSON.parse(event.data);
-          console.log('[CLIENT] Parsed payload:', {
-            type: payload.type,
-            hasData: typeof payload.data === 'string',
-            dataLength: typeof payload.data === 'string' ? payload.data.length : 0,
-          });
           
           if (payload.type === 'chunk' && typeof payload.data === 'string') {
             buffer += payload.data;
-            console.log('[CLIENT] Buffer updated, total length:', buffer.length);
             target.innerHTML = buffer;
             status.textContent = 'Adding sections&hellip;';
           } else if (payload.type === 'done') {
-            console.log('[CLIENT] Stream done, final buffer length:', buffer.length);
             status.textContent = 'James Paterson\'s personal website is ready.';
             socket.close();
           } else if (payload.type === 'error' && typeof payload.message === 'string') {
@@ -104,8 +80,6 @@ const DEFAULT_CONTENT = String.raw`
             const errorMarkup = '<pre style="white-space: pre-wrap; background: #f5f5f5; padding: 1rem; border-radius: 0.5rem;">' + escapeHtml(payload.message) + '</pre>';
             target.innerHTML = errorMarkup;
             socket.close();
-          } else {
-            console.warn('[CLIENT] Unknown payload type:', payload.type);
           }
         } catch (error) {
           console.error('[CLIENT] Unable to process message', {
@@ -116,13 +90,6 @@ const DEFAULT_CONTENT = String.raw`
       });
 
       socket.addEventListener('close', (event) => {
-        console.log('[CLIENT] WebSocket closed:', {
-          code: event.code,
-          reason: event.reason,
-          wasClean: event.wasClean,
-          bufferLength: buffer.length,
-          messageCount,
-        });
         if (!buffer) {
           status.textContent = 'Connection closed before any content was received.';
         }
@@ -142,19 +109,13 @@ type StreamOptions = {
 };
 
 const streamPersonalWebsite = async ({ signal, onChunk }: StreamOptions): Promise<void> => {
-  console.log('[STREAM] Starting streamPersonalWebsite...');
+  console.log('[STREAM] Starting stream...');
   const apiKey = process.env.OPENAPI_API_KEY;
 
   if (!apiKey) {
     console.error('[STREAM] ERROR: OPENAPI_API_KEY is not configured');
     throw new Error('OPENAPI_API_KEY is not configured. Please add it to your environment.');
   }
-
-  console.log('[STREAM] Making request to OpenAPI:', {
-    endpoint: OPENAPI_ENDPOINT,
-    model: OPENAPI_MODEL,
-    promptLength: STREAM_PROMPT.length,
-  });
 
   const response = await fetch(OPENAPI_ENDPOINT, {
     method: 'POST',
@@ -168,13 +129,6 @@ const streamPersonalWebsite = async ({ signal, onChunk }: StreamOptions): Promis
       stream: true,
     }),
     signal,
-  });
-
-  console.log('[STREAM] Received response:', {
-    status: response.status,
-    statusText: response.statusText,
-    hasBody: !!response.body,
-    headers: Object.fromEntries(response.headers.entries()),
   });
 
   if (!response.ok || !response.body) {
@@ -198,8 +152,6 @@ const streamPersonalWebsite = async ({ signal, onChunk }: StreamOptions): Promis
       const rawEvent = buffer.slice(0, newlineIndex);
       buffer = buffer.slice(newlineIndex + 2);
 
-      console.log('[STREAM] Raw event received:', rawEvent.substring(0, 300));
-
       const payload = rawEvent
         .split('\n')
         .map((line) => line.trim())
@@ -208,11 +160,8 @@ const streamPersonalWebsite = async ({ signal, onChunk }: StreamOptions): Promis
         .join('\n');
 
       if (!payload) {
-        console.log('[STREAM] Empty payload, skipping');
         continue;
       }
-      
-      console.log('[STREAM] Extracted payload:', payload.substring(0, 200));
 
       if (payload === '[DONE]') {
         completed = true;
@@ -221,42 +170,29 @@ const streamPersonalWebsite = async ({ signal, onChunk }: StreamOptions): Promis
 
       try {
         const parsed = JSON.parse(payload) as { type?: string; delta?: unknown; error?: { message?: string } };
-        
-        console.log('[STREAM] Parsed event:', {
-          type: parsed.type,
-          hasDelta: 'delta' in parsed,
-          deltaType: typeof parsed.delta,
-          fullPayload: JSON.stringify(parsed).substring(0, 200),
-        });
 
         // Handle custom API format: response.output_text.delta
         if (parsed.type === 'response.output_text.delta' && typeof parsed.delta === 'string') {
-          console.log('[STREAM] Processing delta chunk, length:', parsed.delta.length);
           onChunk(parsed.delta);
         } 
         // Handle standard OpenAI chat completions format
         else if (parsed.choices && Array.isArray(parsed.choices) && parsed.choices.length > 0) {
           const choice = parsed.choices[0];
           if (choice.delta && choice.delta.content && typeof choice.delta.content === 'string') {
-            console.log('[STREAM] Processing OpenAI chat completion chunk, length:', choice.delta.content.length);
             onChunk(choice.delta.content);
           }
         }
         // Handle direct content field
         else if (typeof parsed.content === 'string') {
-          console.log('[STREAM] Processing content chunk, length:', parsed.content.length);
           onChunk(parsed.content);
         }
         // Handle text field
         else if (typeof parsed.text === 'string') {
-          console.log('[STREAM] Processing text chunk, length:', parsed.text.length);
           onChunk(parsed.text);
         }
         else if (parsed.type === 'response.error') {
           const message = parsed.error?.message ?? 'The OpenAPI service returned an unknown error.';
           throw new Error(message);
-        } else {
-          console.log('[STREAM] Unhandled event type:', parsed.type, 'full structure:', Object.keys(parsed));
         }
       } catch (error) {
         if (error instanceof SyntaxError) {
@@ -277,19 +213,24 @@ const streamPersonalWebsite = async ({ signal, onChunk }: StreamOptions): Promis
 
   try {
     let chunkCount = 0;
+    const PROGRESS_LOG_INTERVAL = 10; // Log progress every 10 chunks
     while (!completed) {
       const { value, done } = await reader.read();
 
       if (done) {
-        console.log('[STREAM] Stream reader done, total chunks read:', chunkCount);
+        console.log('[STREAM] Stream stopped, total chunks processed:', chunkCount);
         break;
       }
 
       chunkCount++;
       const decoded = decoder.decode(value, { stream: true });
-      console.log('[STREAM] Read chunk #' + chunkCount + ', length:', decoded.length, 'preview:', decoded.substring(0, 100));
       buffer += decoded;
       processBuffer();
+      
+      // Log progress periodically
+      if (chunkCount % PROGRESS_LOG_INTERVAL === 0) {
+        console.log('[STREAM] Progress: processed', chunkCount, 'chunks');
+      }
     }
 
     if (!completed) {
@@ -330,39 +271,30 @@ const buildPage = (requestedContent?: unknown): string => {
 };
 
 app.get('/', (req: Request, res: Response) => {
-  console.log('[HTTP] GET / request received');
   const page = buildPage(req.query.content);
-  console.log('[HTTP] Page built, length:', page.length);
   res.header('Content-Type', 'text/html; charset=UTF-8');
   res.send(page);
 });
 
 const wss = new WebSocketServer({ server, path: '/stream' });
 
-console.log('[WS] WebSocket server created on path /stream');
-
 wss.on('connection', (socket: WebSocket, req) => {
-  console.log('[WS] New connection established:', {
-    remoteAddress: req.socket.remoteAddress,
-    readyState: socket.readyState,
-  });
-
   const abortController = new AbortController();
+  let chunkCount = 0;
+  const PROGRESS_LOG_INTERVAL = 20; // Log progress every 20 chunks sent
 
   const sendPayload = (payload: Record<string, unknown>) => {
     if (socket.readyState === WebSocket.OPEN) {
       const json = JSON.stringify(payload);
-      console.log('[WS] Sending payload:', {
-        type: payload.type,
-        dataLength: typeof payload.data === 'string' ? payload.data.length : 0,
-        jsonLength: json.length,
-      });
       socket.send(json);
-    } else {
-      console.warn('[WS] Cannot send payload, socket not open:', {
-        readyState: socket.readyState,
-        type: payload.type,
-      });
+      
+      // Log progress periodically for chunk payloads
+      if (payload.type === 'chunk') {
+        chunkCount++;
+        if (chunkCount % PROGRESS_LOG_INTERVAL === 0) {
+          console.log('[WS] Progress: sent', chunkCount, 'chunks to client');
+        }
+      }
     }
   };
 
@@ -371,18 +303,12 @@ wss.on('connection', (socket: WebSocket, req) => {
   });
 
   socket.on('close', (code, reason) => {
-    console.log('[WS] Socket closed:', {
-      code,
-      reason: reason.toString(),
-    });
     abortController.abort();
   });
 
-  console.log('[WS] Starting streamPersonalWebsite...');
   streamPersonalWebsite({
     signal: abortController.signal,
     onChunk: (chunk) => {
-      console.log('[WS] Received chunk from stream, length:', chunk.length);
       sendPayload({ type: 'chunk', data: chunk });
     },
   })
