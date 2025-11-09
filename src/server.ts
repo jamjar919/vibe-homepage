@@ -7,6 +7,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 
 dotenv.config();
 
+console.log('[SERVER] Initializing server...');
+
 const app = express();
 const server = http.createServer(app);
 
@@ -18,6 +20,14 @@ const STREAM_PROMPT = 'render a personal website for James Paterson';
 const OPENAPI_ENDPOINT = 'https://api.openai.com/v1/responses';
 const OPENAPI_MODEL = 'gpt-4.1-mini';
 
+console.log('[SERVER] Configuration:', {
+  PORT,
+  TEMPLATE_PATH,
+  OPENAPI_ENDPOINT,
+  OPENAPI_MODEL,
+  hasApiKey: !!process.env.OPENAPI_API_KEY,
+});
+
 const DEFAULT_CONTENT = String.raw`
   <main style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 900px; margin: 3rem auto; padding: 0 1.5rem;">
     <h1 style="margin-bottom: 0.5rem;">Generating James Paterson's personal website</h1>
@@ -26,16 +36,21 @@ const DEFAULT_CONTENT = String.raw`
   </main>
   <script>
     (() => {
+      console.log('[CLIENT] Initializing WebSocket client...');
       const status = document.getElementById('status');
       const target = document.getElementById('content');
       if (!status || !target) {
+        console.error('[CLIENT] ERROR: Could not find status or target elements');
         return;
       }
+      console.log('[CLIENT] Found DOM elements:', { status: !!status, target: !!target });
 
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
       const socketUrl = protocol + '://' + window.location.host + '/stream';
+      console.log('[CLIENT] Connecting to WebSocket:', socketUrl);
       const socket = new WebSocket(socketUrl);
       let buffer = '';
+      let messageCount = 0;
 
       const escapeHtml = (value) => value.replace(/[&<>"']/g, (character) => ({
         '&': '&amp;',
@@ -46,37 +61,62 @@ const DEFAULT_CONTENT = String.raw`
       })[character] || character);
 
       socket.addEventListener('open', () => {
+        console.log('[CLIENT] WebSocket opened');
         status.textContent = 'Building the page&hellip;';
       });
 
       socket.addEventListener('message', (event) => {
+        messageCount++;
+        console.log('[CLIENT] Message #' + messageCount + ' received, length:', event.data.length);
         try {
           const payload = JSON.parse(event.data);
+          console.log('[CLIENT] Parsed payload:', {
+            type: payload.type,
+            hasData: typeof payload.data === 'string',
+            dataLength: typeof payload.data === 'string' ? payload.data.length : 0,
+          });
+          
           if (payload.type === 'chunk' && typeof payload.data === 'string') {
             buffer += payload.data;
+            console.log('[CLIENT] Buffer updated, total length:', buffer.length);
             target.innerHTML = buffer;
             status.textContent = 'Adding sections&hellip;';
           } else if (payload.type === 'done') {
+            console.log('[CLIENT] Stream done, final buffer length:', buffer.length);
             status.textContent = 'James Paterson\'s personal website is ready.';
             socket.close();
           } else if (payload.type === 'error' && typeof payload.message === 'string') {
+            console.error('[CLIENT] Error payload received:', payload.message);
             status.textContent = 'Unable to build the website.';
             const errorMarkup = '<pre style="white-space: pre-wrap; background: #f5f5f5; padding: 1rem; border-radius: 0.5rem;">' + escapeHtml(payload.message) + '</pre>';
             target.innerHTML = errorMarkup;
             socket.close();
+          } else {
+            console.warn('[CLIENT] Unknown payload type:', payload.type);
           }
         } catch (error) {
-          console.error('Unable to process message', error);
+          console.error('[CLIENT] Unable to process message', {
+            error,
+            data: event.data.substring(0, 200),
+          });
         }
       });
 
-      socket.addEventListener('close', () => {
+      socket.addEventListener('close', (event) => {
+        console.log('[CLIENT] WebSocket closed:', {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean,
+          bufferLength: buffer.length,
+          messageCount,
+        });
         if (!buffer) {
           status.textContent = 'Connection closed before any content was received.';
         }
       });
 
-      socket.addEventListener('error', () => {
+      socket.addEventListener('error', (error) => {
+        console.error('[CLIENT] WebSocket error:', error);
         status.textContent = 'A network error occurred.';
       });
     })();
@@ -89,11 +129,19 @@ type StreamOptions = {
 };
 
 const streamPersonalWebsite = async ({ signal, onChunk }: StreamOptions): Promise<void> => {
+  console.log('[STREAM] Starting streamPersonalWebsite...');
   const apiKey = process.env.OPENAPI_API_KEY;
 
   if (!apiKey) {
+    console.error('[STREAM] ERROR: OPENAPI_API_KEY is not configured');
     throw new Error('OPENAPI_API_KEY is not configured. Please add it to your environment.');
   }
+
+  console.log('[STREAM] Making request to OpenAPI:', {
+    endpoint: OPENAPI_ENDPOINT,
+    model: OPENAPI_MODEL,
+    promptLength: STREAM_PROMPT.length,
+  });
 
   const response = await fetch(OPENAPI_ENDPOINT, {
     method: 'POST',
@@ -109,8 +157,19 @@ const streamPersonalWebsite = async ({ signal, onChunk }: StreamOptions): Promis
     signal,
   });
 
+  console.log('[STREAM] Received response:', {
+    status: response.status,
+    statusText: response.statusText,
+    hasBody: !!response.body,
+    headers: Object.fromEntries(response.headers.entries()),
+  });
+
   if (!response.ok || !response.body) {
     const errorText = await response.text().catch(() => '');
+    console.error('[STREAM] Request failed:', {
+      status: response.status,
+      errorText,
+    });
     throw new Error(`OpenAPI request failed with status ${response.status}: ${errorText}`.trim());
   }
 
@@ -208,48 +267,85 @@ const buildPage = (requestedContent?: unknown): string => {
 };
 
 app.get('/', (req: Request, res: Response) => {
+  console.log('[HTTP] GET / request received');
   const page = buildPage(req.query.content);
+  console.log('[HTTP] Page built, length:', page.length);
   res.header('Content-Type', 'text/html; charset=UTF-8');
   res.send(page);
 });
 
 const wss = new WebSocketServer({ server, path: '/stream' });
 
-wss.on('connection', (socket: WebSocket) => {
+console.log('[WS] WebSocket server created on path /stream');
+
+wss.on('connection', (socket: WebSocket, req) => {
+  console.log('[WS] New connection established:', {
+    remoteAddress: req.socket.remoteAddress,
+    readyState: socket.readyState,
+  });
+
   const abortController = new AbortController();
 
   const sendPayload = (payload: Record<string, unknown>) => {
     if (socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(payload));
+      const json = JSON.stringify(payload);
+      console.log('[WS] Sending payload:', {
+        type: payload.type,
+        dataLength: typeof payload.data === 'string' ? payload.data.length : 0,
+        jsonLength: json.length,
+      });
+      socket.send(json);
+    } else {
+      console.warn('[WS] Cannot send payload, socket not open:', {
+        readyState: socket.readyState,
+        type: payload.type,
+      });
     }
   };
 
+  socket.on('error', (error) => {
+    console.error('[WS] Socket error:', error);
+  });
+
+  socket.on('close', (code, reason) => {
+    console.log('[WS] Socket closed:', {
+      code,
+      reason: reason.toString(),
+    });
+    abortController.abort();
+  });
+
+  console.log('[WS] Starting streamPersonalWebsite...');
   streamPersonalWebsite({
     signal: abortController.signal,
     onChunk: (chunk) => {
+      console.log('[WS] Received chunk from stream, length:', chunk.length);
       sendPayload({ type: 'chunk', data: chunk });
     },
   })
     .then(() => {
+      console.log('[WS] Stream completed successfully');
       sendPayload({ type: 'done' });
     })
     .catch((error) => {
       if (error instanceof Error && error.name === 'AbortError') {
+        console.log('[WS] Stream aborted');
         return;
       }
 
       const message = error instanceof Error ? error.message : 'Unknown error while contacting OpenAPI.';
-      console.error('OpenAPI streaming failed:', message);
+      console.error('[WS] OpenAPI streaming failed:', {
+        message,
+        error,
+        errorName: error instanceof Error ? error.name : 'Unknown',
+      });
       sendPayload({ type: 'error', message });
     });
-
-  socket.on('close', () => {
-    abortController.abort();
-  });
 });
 
 server.listen(PORT, () => {
-  console.log(`Server is listening on http://localhost:${PORT}`);
+  console.log(`[SERVER] Server is listening on http://localhost:${PORT}`);
+  console.log(`[SERVER] WebSocket endpoint: ws://localhost:${PORT}/stream`);
 });
 
 export { app, server };

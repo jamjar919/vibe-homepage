@@ -49,6 +49,12 @@ module.exports = (_, argv = {}) => {
         module: /express[\\/]+lib[\\/]+view\.js/,
         message: /Critical dependency: the request of a dependency is an expression/,
       },
+      {
+        message: /Can't resolve 'bufferutil'/,
+      },
+      {
+        message: /Can't resolve 'utf-8-validate'/,
+      },
     ],
   };
 };

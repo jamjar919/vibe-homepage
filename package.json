@@ -1,6 +1,9 @@
 {
   "name": "vibe-homepage",
   "packageManager": "yarn@4.9.2",
+  "engines": {
+    "node": "22.20.0"
+  },
   "dependencies": {
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
